@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, properties, conversations, messages } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,184 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ─── Property Queries ──────────────────────────────────────────────
+
+export interface PropertyFilters {
+  city?: string;
+  maxRent?: number;
+  minRent?: number;
+  bedrooms?: number;
+  propertyType?: string;
+}
+
+export async function searchProperties(filters: PropertyFilters) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot search properties: database not available");
+    return [];
+  }
+
+  try {
+    const conditions = [];
+    if (filters.city) {
+      conditions.push(eq(properties.city, filters.city as any));
+    }
+    if (filters.maxRent !== undefined) {
+      conditions.push(lte(properties.rentPrice, filters.maxRent));
+    }
+    if (filters.minRent !== undefined) {
+      conditions.push(gte(properties.rentPrice, filters.minRent));
+    }
+    if (filters.bedrooms !== undefined) {
+      conditions.push(eq(properties.bedrooms, filters.bedrooms));
+    }
+    if (filters.propertyType) {
+      conditions.push(eq(properties.propertyType, filters.propertyType as any));
+    }
+
+    const query = db.select().from(properties);
+    if (conditions.length > 0) {
+      const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+      const result = await query.where(whereClause).limit(20);
+      return result;
+    }
+
+    const result = await query.limit(20);
+    return result;
+  } catch (error) {
+    console.error("[Database] Failed to search properties:", error);
+    return [];
+  }
+}
+
+export async function getFeaturedProperties() {
+  const db = await getDb();
+  if (!db) return [];
+
+  try {
+    const result = await db.select()
+      .from(properties)
+      .where(eq(properties.isFeatured, 1))
+      .limit(6);
+    return result;
+  } catch (error) {
+    console.error("[Database] Failed to get featured properties:", error);
+    return [];
+  }
+}
+
+export async function getPropertiesByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+
+  try {
+    const result = await db.select()
+      .from(properties)
+      .where(inArray(properties.id, ids));
+    return result;
+  } catch (error) {
+    console.error("[Database] Failed to get properties by IDs:", error);
+    return [];
+  }
+}
+
+export async function getAllCities() {
+  const db = await getDb();
+  if (!db) return [];
+
+  try {
+    const result = await db.select({ city: properties.city })
+      .from(properties)
+      .groupBy(properties.city);
+    return result.map(r => r.city);
+  } catch (error) {
+    console.error("[Database] Failed to get cities:", error);
+    return [];
+  }
+}
+
+export async function getAllPropertyTypes() {
+  const db = await getDb();
+  if (!db) return [];
+
+  try {
+    const result = await db.select({ propertyType: properties.propertyType })
+      .from(properties)
+      .groupBy(properties.propertyType);
+    return result.map(r => r.propertyType);
+  } catch (error) {
+    console.error("[Database] Failed to get property types:", error);
+    return [];
+  }
+}
+
+// ─── Conversation & Message Queries ────────────────────────────────
+
+export async function createConversation(userId?: number, title?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  try {
+    const [result] = await db.insert(conversations)
+      .values({ userId: userId ?? null, title: title ?? "New Chat" });
+    return result.insertId;
+  } catch (error) {
+    console.error("[Database] Failed to create conversation:", error);
+    throw error;
+  }
+}
+
+export async function getConversationMessages(conversationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  try {
+    const result = await db.select()
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId))
+      .orderBy(messages.createdAt);
+    return result;
+  } catch (error) {
+    console.error("[Database] Failed to get messages:", error);
+    return [];
+  }
+}
+
+export async function addMessage(
+  conversationId: number,
+  role: "user" | "assistant",
+  content: string,
+  propertyIds?: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  try {
+    await db.insert(messages).values({
+      conversationId,
+      role,
+      content,
+      propertyIds: propertyIds ?? null,
+    });
+    return true;
+  } catch (error) {
+    console.error("[Database] Failed to add message:", error);
+    throw error;
+  }
+}
+
+export async function getConversation(conversationId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  try {
+    const result = await db.select()
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+    return result.length > 0 ? result[0] : null;
+  } catch (error) {
+    console.error("[Database] Failed to get conversation:", error);
+    return null;
+  }
+}

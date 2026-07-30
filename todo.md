@@ -1,0 +1,21 @@
+# PataNyumba AI Agent - Project TODO
+
+- [x] Database schema: properties table with all required fields
+- [x] Database schema: conversations table for chat history persistence
+- [x] Database schema: messages table for conversation messages
+- [x] Run drizzle-kit generate and apply SQL migrations
+- [x] Backend: database query helpers for properties
+- [x] Backend: AI agent tRPC procedure that parses user messages and queries properties
+- [x] Seed property database with sample listings (Nairobi, Mombasa, Kisumu, Nakuru)
+- [x] Landing page with hero section and "Start Searching" CTA
+- [x] Landing page: featured property highlights section
+- [x] Chat page with AI chat interface
+- [x] Chat page: property listing cards displayed inside chat
+- [x] Chat page: chat history persistence per session
+- [x] Quick-filter chips for city, price range, bedrooms
+- [x] Styling: elegant, premium visual design with clean layouts and sophisticated typography
+- [x] All rent prices displayed in KES
+- [x] Property types use exact labels: bedsitter, 1BR, 2BR, 3BR, apartment, maisonette
+- [x] Platform covers four cities: Nairobi, Mombasa, Kisumu, Nakuru
+- [x] Vitest tests for backend procedures
+- [x] Final verification and delivery

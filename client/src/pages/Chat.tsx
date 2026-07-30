@@ -1,0 +1,411 @@
+import { useState, useEffect, useCallback } from "react";
+import { trpc } from "@/lib/trpc";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { PropertyCard, type PropertyData } from "@/components/PropertyCard";
+import { Home, Send, Sparkles, Loader2, ArrowLeft, MessageSquare } from "lucide-react";
+import { Streamdown } from "streamdown";
+import { Link } from "wouter";
+
+interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  propertyIds: string | null;
+  messageProperties: PropertyData[];
+}
+
+// Allow loose property types from the server
+type LooseProperty = Omit<PropertyData, 'createdAt' | 'updatedAt'> & {
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+
+const SUGGESTED_PROMPTS = [
+  "I need a 2-bedroom house in Eldoret under KSh 25,000",
+  "Find me a bedsitter in Nairobi under KSh 10,000",
+  "Looking for a 1BR apartment in Mombasa near the beach",
+  "Show me properties in Kisumu under KSh 15,000",
+];
+
+const PRICE_RANGES = [
+  { label: "Under KES 10K", min: 0, max: 10000 },
+  { label: "KES 10K - 25K", min: 10000, max: 25000 },
+  { label: "KES 25K - 50K", min: 25000, max: 50000 },
+  { label: "Above KES 50K", min: 50000, max: undefined },
+];
+
+const CITIES = ["Nairobi", "Mombasa", "Kisumu", "Nakuru"];
+const BEDROOMS = [0, 1, 2, 3];
+const PROPERTY_TYPES = ["bedsitter", "1BR", "2BR", "3BR", "apartment", "maisonette"];
+
+export default function Chat() {
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
+
+  // Filters
+  const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [selectedPriceRange, setSelectedPriceRange] = useState<{ min: number; max?: number } | null>(null);
+  const [selectedBedrooms, setSelectedBedrooms] = useState<number | null>(null);
+  const [selectedType, setSelectedType] = useState<string | null>(null);
+
+  const sendMessage = trpc.chat.sendMessage.useMutation();
+  const getHistory = trpc.chat.getHistory.useQuery(
+    { conversationId: conversationId! },
+    { enabled: !!conversationId }
+  );
+
+  // Load history when conversationId changes
+  useEffect(() => {
+    if (getHistory.data) {
+      const enriched: ChatMessage[] = getHistory.data.messages.map(m => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        propertyIds: m.propertyIds,
+        messageProperties: (m.messageProperties ?? []).filter((p): p is PropertyData => p != null) as PropertyData[],
+      }));
+      setMessages(enriched);
+    }
+  }, [getHistory.data]);
+
+  const handleSendMessage = useCallback(
+    async (content: string) => {
+      if (!content.trim() || isLoading) return;
+
+      setIsLoading(true);
+
+      // Add user message optimistically
+      const userMsg: ChatMessage = {
+        id: Date.now(),
+        role: "user",
+        content: content.trim(),
+        propertyIds: null,
+        messageProperties: [],
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+
+      // Build filters from selected chips
+      const filters: Record<string, unknown> = {};
+      if (selectedCity) filters.city = selectedCity;
+      if (selectedPriceRange) {
+        filters.minRent = selectedPriceRange.min;
+        if (selectedPriceRange.max !== undefined) filters.maxRent = selectedPriceRange.max;
+      }
+      if (selectedBedrooms !== null) filters.bedrooms = selectedBedrooms;
+      if (selectedType) filters.propertyType = selectedType;
+
+      // Append filter info to message if any filters are active
+      const filterContext = Object.keys(filters).length > 0
+        ? ` [Filters: ${Object.entries(filters).map(([k, v]) => `${k}: ${v}`).join(", ")}]`
+        : "";
+
+      try {
+        const response = await sendMessage.mutateAsync({
+          conversationId: conversationId ?? undefined,
+          message: content.trim() + filterContext,
+        });
+
+        setConversationId(response.conversationId);
+
+        const assistantMsg: ChatMessage = {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: response.assistantMessage,
+          propertyIds: JSON.stringify(response.properties.map((p) => p.id)),
+          messageProperties: response.properties.filter((p): p is typeof response.properties[0] => !!p),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      } catch (error) {
+        console.error("Failed to send message:", error);
+        const errorMsg: ChatMessage = {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: "Sorry, something went wrong. Please try again.",
+          propertyIds: null,
+          messageProperties: [],
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [conversationId, isLoading, sendMessage, selectedCity, selectedPriceRange, selectedBedrooms, selectedType]
+  );
+
+  const handleNewChat = () => {
+    setConversationId(null);
+    setMessages([]);
+    setInput("");
+    setSelectedCity(null);
+    setSelectedPriceRange(null);
+    setSelectedBedrooms(null);
+    setSelectedType(null);
+  };
+
+  const activeFilterCount = [selectedCity, selectedPriceRange, selectedBedrooms, selectedType].filter(Boolean).length;
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* Header */}
+      <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-md border-b">
+        <div className="container flex items-center justify-between h-14">
+          <div className="flex items-center gap-3">
+            <Link href="/">
+              <Button variant="ghost" size="icon" className="shrink-0">
+                <ArrowLeft className="size-4" />
+              </Button>
+            </Link>
+            <div className="flex items-center gap-2">
+              <div className="size-8 rounded-lg bg-primary flex items-center justify-center">
+                <Sparkles className="size-4 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-sm font-semibold leading-none">PataNyumba</h1>
+                <p className="text-xs text-muted-foreground">AI Property Agent</p>
+              </div>
+            </div>
+          </div>
+          {messages.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={handleNewChat}>
+              <MessageSquare className="size-4 mr-1.5" />
+              New Chat
+            </Button>
+          )}
+        </div>
+      </header>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col max-w-4xl w-full mx-auto">
+        {/* Filter Chips */}
+        {activeFilterCount === 0 || messages.length === 0 ? (
+          <div className="px-4 pt-4 pb-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+              Quick Filters
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {/* City chips */}
+              {CITIES.map((city) => (
+                <Badge
+                  key={city}
+                  variant={selectedCity === city ? "default" : "outline"}
+                  className="cursor-pointer transition-all duration-150 ease-out hover:scale-[1.02] active:scale-[0.97]"
+                  onClick={() => setSelectedCity(selectedCity === city ? null : city)}
+                >
+                  {city}
+                </Badge>
+              ))}
+              {/* Price range chips */}
+              {PRICE_RANGES.map((range) => {
+                const isActive =
+                  selectedPriceRange?.min === range.min &&
+                  selectedPriceRange?.max === range.max;
+                return (
+                  <Badge
+                    key={range.label}
+                    variant={isActive ? "default" : "outline"}
+                    className="cursor-pointer transition-all duration-150 ease-out hover:scale-[1.02] active:scale-[0.97]"
+                    onClick={() =>
+                      setSelectedPriceRange(isActive ? null : { min: range.min, max: range.max })
+                    }
+                  >
+                    {range.label}
+                  </Badge>
+                );
+              })}
+              {/* Bedroom chips */}
+              {BEDROOMS.map((b) => (
+                <Badge
+                  key={`bed-${b}`}
+                  variant={selectedBedrooms === b ? "default" : "outline"}
+                  className="cursor-pointer transition-all duration-150 ease-out hover:scale-[1.02] active:scale-[0.97]"
+                  onClick={() => setSelectedBedrooms(selectedBedrooms === b ? null : b)}
+                >
+                  {b === 0 ? "Studio" : `${b}BR`}
+                </Badge>
+              ))}
+              {/* Property type chips */}
+              {PROPERTY_TYPES.map((type) => (
+                <Badge
+                  key={type}
+                  variant={selectedType === type ? "default" : "outline"}
+                  className="cursor-pointer transition-all duration-150 ease-out hover:scale-[1.02] active:scale-[0.97]"
+                  onClick={() => setSelectedType(selectedType === type ? null : type)}
+                >
+                  {type}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 pt-3 pb-1">
+            <div className="flex flex-wrap gap-2">
+              {selectedCity && (
+                <Badge
+                  variant="default"
+                  className="cursor-pointer"
+                  onClick={() => setSelectedCity(null)}
+                >
+                  {selectedCity} x
+                </Badge>
+              )}
+              {selectedPriceRange && (
+                <Badge
+                  variant="default"
+                  className="cursor-pointer"
+                  onClick={() => setSelectedPriceRange(null)}
+                >
+                  KES {selectedPriceRange.min.toLocaleString()}{selectedPriceRange.max ? `-${selectedPriceRange.max.toLocaleString()}` : "+"} x
+                </Badge>
+              )}
+              {selectedBedrooms !== null && (
+                <Badge
+                  variant="default"
+                  className="cursor-pointer"
+                  onClick={() => setSelectedBedrooms(null)}
+                >
+                  {selectedBedrooms === 0 ? "Studio" : `${selectedBedrooms}BR`} x
+                </Badge>
+              )}
+              {selectedType && (
+                <Badge
+                  variant="default"
+                  className="cursor-pointer"
+                  onClick={() => setSelectedType(null)}
+                >
+                  {selectedType} x
+                </Badge>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs px-2"
+                onClick={() => {
+                  setSelectedCity(null);
+                  setSelectedPriceRange(null);
+                  setSelectedBedrooms(null);
+                  setSelectedType(null);
+                }}
+              >
+                Clear all
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Messages */}
+        <ScrollArea className="flex-1 px-4">
+          <div className="space-y-6 py-4">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16">
+                <div className="size-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                  <Sparkles className="size-8 text-primary" />
+                </div>
+                <h2 className="text-xl font-semibold mb-2">How can I help you find a home?</h2>
+                <p className="text-sm text-muted-foreground text-center max-w-md mb-6">
+                  Describe what you're looking for in natural language, and I'll find matching rental properties for you.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full">
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      onClick={() => handleSendMessage(prompt)}
+                      className="text-left px-4 py-3 rounded-xl border bg-card text-sm hover:bg-accent transition-all duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] hover:shadow-sm"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <div key={msg.id} className={msg.role === "user" ? "flex justify-end" : ""}>
+                <div className={`max-w-[85%] ${msg.role === "user" ? "" : "w-full"}`}>
+                  {msg.role === "user" ? (
+                    <div className="bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="bg-muted rounded-2xl rounded-bl-sm px-4 py-3">
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <Streamdown>{msg.content}</Streamdown>
+                        </div>
+                      </div>
+                      {msg.messageProperties.length > 0 && (
+                        <div className="space-y-3">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            {msg.messageProperties.length} matching {msg.messageProperties.length === 1 ? "property" : "properties"}
+                          </p>
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            {msg.messageProperties.map((prop) => (
+                              <PropertyCard key={prop.id} property={prop} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="flex items-start gap-3">
+                <div className="bg-muted rounded-2xl rounded-bl-sm px-4 py-3">
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                </div>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+
+        {/* Input Area */}
+        <div className="sticky bottom-0 bg-card/80 backdrop-blur-md border-t px-4 py-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSendMessage(input);
+            }}
+            className="flex gap-2 max-w-4xl mx-auto"
+          >
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              placeholder="Describe the home you're looking for..."
+              className="flex-1 resize-none min-h-[44px] max-h-32 rounded-xl"
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(input);
+                }
+              }}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!input.trim() || isLoading}
+              className="shrink-0 h-[44px] w-[44px] rounded-xl transition-transform duration-150 ease-out active:scale-[0.97]"
+            >
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+            </Button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
