@@ -111,8 +111,10 @@ export const appRouter = router({
         }
 
         try {
-          // Parse the user's message with LLM to extract search filters
-          const filterPrompt = `You are a property search assistant for a Kenyan rental platform. Extract search filters from the user's message and return them as JSON. If a filter is not mentioned, omit it.
+          // 1. Parse search filters (with fallback for models that don't support json_schema)
+          let filters: PropertyFilters = {};
+          try {
+            const filterPrompt = `You are a property search assistant for a Kenyan rental platform. Extract search filters from the user's message and return them as JSON. If a filter is not mentioned, omit it.
 
 Available cities: Nairobi, Mombasa, Kisumu, Nakuru
 Available property types: bedsitter, 1BR, 2BR, 3BR, apartment, maisonette
@@ -128,63 +130,72 @@ Return ONLY a JSON object with these possible fields:
 
 Do NOT include any other fields.`;
 
-          const filterResponse = await invokeLLM({
-            messages: [{ role: "user", content: filterPrompt }],
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "search_filters",
-                strict: true,
-                schema: {
-                  type: "object",
-                  properties: {
-                    city: { type: "string", description: "City name" },
-                    maxRent: { type: "integer", description: "Maximum rent in KES" },
-                    minRent: { type: "integer", description: "Minimum rent in KES" },
-                    bedrooms: { type: "integer", description: "Number of bedrooms" },
-                    propertyType: { type: "string", description: "Property type" },
+            const filterResponse = await invokeLLM({
+              messages: [{ role: "user", content: filterPrompt }],
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "search_filters",
+                  strict: true,
+                  schema: {
+                    type: "object",
+                    properties: {
+                      city: { type: "string", description: "City name" },
+                      maxRent: { type: "integer", description: "Maximum rent in KES" },
+                      minRent: { type: "integer", description: "Minimum rent in KES" },
+                      bedrooms: { type: "integer", description: "Number of bedrooms" },
+                      propertyType: { type: "string", description: "Property type" },
+                    },
+                    required: [],
+                    additionalProperties: false,
                   },
-                  required: [],
-                  additionalProperties: false,
                 },
               },
-            },
-          });
+            }).catch(async (err) => {
+              console.warn("[Chat] LLM json_schema failed, retrying with plain text:", err);
+              // Fallback to plain text JSON if json_schema fails
+              return invokeLLM({
+                messages: [
+                  { role: "system", content: "You are a helpful assistant that outputs only valid JSON." },
+                  { role: "user", content: filterPrompt }
+                ],
+              });
+            });
 
-          const filterContent = filterResponse.choices[0]?.message?.content;
-          const filterData = JSON.parse(
-            typeof filterContent === 'string' ? filterContent : "{}"
-          );
-
-          // Validate and clean filter data
-          const filters: PropertyFilters = {};
-          if (filterData.city) {
-            const validCities = ["Nairobi", "Mombasa", "Kisumu", "Nakuru"];
-            if (validCities.includes(filterData.city)) {
-              filters.city = filterData.city;
+            const filterContent = filterResponse.choices[0]?.message?.content;
+            let filterData: any = {};
+            if (typeof filterContent === "string") {
+              // Clean potential markdown code blocks
+              const cleaned = filterContent.replace(/```json\n?|\n?```/g, "").trim();
+              try {
+                filterData = JSON.parse(cleaned);
+              } catch (parseErr) {
+                console.error("[Chat] Failed to parse filter JSON:", cleaned);
+              }
             }
-          }
-          if (filterData.maxRent && typeof filterData.maxRent === "number") {
-            filters.maxRent = filterData.maxRent;
-          }
-          if (filterData.minRent && typeof filterData.minRent === "number") {
-            filters.minRent = filterData.minRent;
-          }
-          if (filterData.bedrooms && typeof filterData.bedrooms === "number") {
-            filters.bedrooms = filterData.bedrooms;
-          }
-          if (filterData.propertyType) {
-            const validTypes = ["bedsitter", "1BR", "2BR", "3BR", "apartment", "maisonette"];
-            if (validTypes.includes(filterData.propertyType)) {
-              filters.propertyType = filterData.propertyType;
+
+            // Validate and clean filter data
+            if (filterData.city) {
+              const validCities = ["Nairobi", "Mombasa", "Kisumu", "Nakuru"];
+              if (validCities.includes(filterData.city)) filters.city = filterData.city;
             }
+            if (typeof filterData.maxRent === "number") filters.maxRent = filterData.maxRent;
+            if (typeof filterData.minRent === "number") filters.minRent = filterData.minRent;
+            if (typeof filterData.bedrooms === "number") filters.bedrooms = filterData.bedrooms;
+            if (filterData.propertyType) {
+              const validTypes = ["bedsitter", "1BR", "2BR", "3BR", "apartment", "maisonette"];
+              if (validTypes.includes(filterData.propertyType)) filters.propertyType = filterData.propertyType;
+            }
+          } catch (filterErr) {
+            console.error("[Chat] Filter extraction failed:", filterErr);
+            // Continue with empty filters rather than failing the whole request
           }
 
-          // Search properties with extracted filters
+          // 2. Search properties
           const matchedProperties = await searchProperties(filters);
           const propertyIds = matchedProperties.map((p) => p.id);
 
-          // Generate conversational response with LLM
+          // 3. Generate conversational response
           const responsePrompt = `You are PataNyumba, a friendly and knowledgeable AI assistant for finding rental properties in Kenya. 
 
 User's message: "${input.message}"
@@ -216,7 +227,7 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
               ? responseContent
               : "I apologize, I couldn't process your request. Please try again.";
 
-          // Best-effort: Save assistant message with property IDs
+          // Best-effort: Save assistant message
           try {
             if (conversationId && conversationId > 0) {
               await addMessage(
@@ -235,21 +246,22 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
             assistantMessage: assistantContent,
             properties: matchedProperties,
           };
-        } catch (error) {
+        } catch (error: any) {
           console.error("[Chat] AI processing error:", error);
 
           // Fallback: return basic search
           const fallbackProperties = await searchProperties({});
-          const fallbackMessage = "I'm having trouble processing your request right now. Please try again, or browse our featured listings below.";
+          
+          // Provide more context in the fallback message if it's an API error
+          let fallbackMessage = "I'm having trouble processing your request right now. Please try again, or browse our featured listings below.";
+          if (error?.message?.includes("API_KEY")) {
+            fallbackMessage = "I'm having trouble connecting to my AI backend. Please check the API configuration or try again later.";
+          }
 
           // Best-effort: save error message
           try {
             if (conversationId && conversationId > 0) {
-              await addMessage(
-                conversationId,
-                "assistant",
-                fallbackMessage
-              );
+              await addMessage(conversationId, "assistant", fallbackMessage);
             }
           } catch (dbError) {
             console.error("[Chat] Failed to save fallback message to DB:", dbError);
