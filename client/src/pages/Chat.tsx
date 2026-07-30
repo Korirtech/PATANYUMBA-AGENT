@@ -70,9 +70,9 @@ function loadChatState(): { messages: ChatMessage[]; conversationId: number | nu
 
 function saveChatState(conversationId: number | null, messages: ChatMessage[]) {
   try {
-    const state = { conversationId, messages };
     // Only store the last 50 messages to keep localStorage manageable
     const trimmedMessages = messages.slice(-50);
+    const state = { conversationId, messages: trimmedMessages };
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(state));
   } catch {
     // localStorage full — silently fail
@@ -100,6 +100,16 @@ function saveConversationId(id: number | null) {
   }
 }
 
+/** Wipe all chat-related localStorage keys and reset to a clean state. */
+function clearChatStorage() {
+  try {
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
+  } catch {
+    // silently fail
+  }
+}
+
 export default function Chat() {
   // Initialize from localStorage on mount
   const [conversationId, setConversationId] = useState<number | null>(() => {
@@ -117,6 +127,8 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
+  // Track whether we've already attempted to validate the stored conversation ID
+  const [historyValidated, setHistoryValidated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Filters
@@ -126,13 +138,62 @@ export default function Chat() {
   const [selectedType, setSelectedType] = useState<string | null>(null);
 
   const sendMessage = trpc.chat.sendMessage.useMutation();
+
+  // Fetch history only when we have a conversationId and haven't validated yet.
+  // retry: false prevents React Query from retrying on a stale/invalid ID, which
+  // would delay the recovery path by up to ~30 seconds.
   const getHistory = trpc.chat.getHistory.useQuery(
     { conversationId: conversationId! },
-    { enabled: !!conversationId }
+    {
+      enabled: !!conversationId && !historyValidated,
+      retry: false,
+      staleTime: Infinity, // once loaded, don't re-fetch automatically
+    }
   );
 
-  // Load history from server when conversationId changes (only if we have no local messages)
+  // Handle history load: validate the server response and recover from stale IDs.
   useEffect(() => {
+    if (!conversationId) {
+      setHistoryValidated(true);
+      return;
+    }
+
+    // Query is still in-flight — wait for it to settle.
+    if (getHistory.isLoading) return;
+
+    // The query has settled (either success or error).
+    setHistoryValidated(true);
+
+    if (getHistory.isError) {
+      // Network or server error while fetching history — clear the stale ID and
+      // start fresh so the user can still send new messages.
+      console.warn("[Chat] Failed to load conversation history — clearing stale conversation ID.", getHistory.error);
+      clearChatStorage();
+      setConversationId(null);
+      setMessages([]);
+      return;
+    }
+
+    if (getHistory.data === null || getHistory.data === undefined) {
+      // The server returned null, meaning the conversation no longer exists
+      // (e.g. after a server restart that wiped the database).  Clear the stale
+      // ID so subsequent messages create a fresh conversation.
+      console.warn("[Chat] Stored conversation ID is no longer valid — resetting.");
+      clearChatStorage();
+      setConversationId(null);
+      // Keep any locally-cached messages so the user can still read them, but
+      // mark them as orphaned by clearing the conversation linkage.
+      setMessages((prev) => {
+        if (prev.length > 0) {
+          saveChatState(null, prev);
+        }
+        return prev;
+      });
+      return;
+    }
+
+    // Conversation exists on the server — hydrate from server data only when
+    // there are no locally-cached messages (avoids overwriting optimistic state).
     if (getHistory.data && messages.length === 0) {
       const enriched: ChatMessage[] = getHistory.data.messages.map(m => ({
         id: m.id,
@@ -144,7 +205,7 @@ export default function Chat() {
       setMessages(enriched);
       saveChatState(conversationId, enriched);
     }
-  }, [getHistory.data]);
+  }, [getHistory.isLoading, getHistory.isError, getHistory.data, conversationId]);
 
   // Persist conversation ID whenever it changes
   useEffect(() => {
@@ -195,9 +256,13 @@ export default function Chat() {
         ? ` [Filters: ${Object.entries(filters).map(([k, v]) => `${k}: ${v}`).join(", ")}]`
         : "";
 
+      // Capture the current conversationId in a local variable so that if the
+      // server rejects it as stale we can reset state correctly.
+      const currentConversationId = conversationId;
+
       try {
         const response = await sendMessage.mutateAsync({
-          conversationId: conversationId ?? undefined,
+          conversationId: currentConversationId ?? undefined,
           message: content.trim() + filterContext,
         });
 
@@ -211,8 +276,51 @@ export default function Chat() {
           messageProperties: response.properties.filter((p): p is typeof response.properties[0] => !!p),
         };
         setMessages((prev) => [...prev, assistantMsg]);
-      } catch (error) {
-        console.error("Failed to send message:", error);
+      } catch (error: unknown) {
+        console.error("[Chat] Failed to send message:", error);
+
+        // Determine whether the failure is likely caused by a stale conversation
+        // ID (e.g. the server restarted and the conversation no longer exists).
+        // In that case, clear the stale ID and retry the message as a fresh
+        // conversation so the user gets a useful response instead of an error.
+        const isStaleConversationError =
+          currentConversationId !== null &&
+          error instanceof Error &&
+          (error.message.toLowerCase().includes("conversation") ||
+            error.message.toLowerCase().includes("not found") ||
+            error.message.toLowerCase().includes("database"));
+
+        if (isStaleConversationError) {
+          console.warn("[Chat] Stale conversation ID detected — retrying as new conversation.");
+          clearChatStorage();
+          setConversationId(null);
+
+          try {
+            const retryResponse = await sendMessage.mutateAsync({
+              conversationId: undefined,
+              message: content.trim() + filterContext,
+            });
+
+            setConversationId(retryResponse.conversationId);
+
+            const assistantMsg: ChatMessage = {
+              id: Date.now() + 1,
+              role: "assistant",
+              content: retryResponse.assistantMessage,
+              propertyIds: JSON.stringify(retryResponse.properties.map((p) => p.id)),
+              messageProperties: retryResponse.properties.filter(
+                (p): p is typeof retryResponse.properties[0] => !!p
+              ),
+            };
+            setMessages((prev) => [...prev, assistantMsg]);
+            setIsLoading(false);
+            return;
+          } catch (retryError) {
+            console.error("[Chat] Retry after stale-ID reset also failed:", retryError);
+          }
+        }
+
+        // Generic error — show a user-friendly message with a hint to try again.
         const errorMsg: ChatMessage = {
           id: Date.now() + 1,
           role: "assistant",
@@ -236,9 +344,8 @@ export default function Chat() {
     setSelectedPriceRange(null);
     setSelectedBedrooms(null);
     setSelectedType(null);
-    // Clear localStorage
-    localStorage.removeItem(CHAT_STORAGE_KEY);
-    localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
+    setHistoryValidated(false);
+    clearChatStorage();
   };
 
   const activeFilterCount = [selectedCity, selectedPriceRange, selectedBedrooms, selectedType].filter(Boolean).length;

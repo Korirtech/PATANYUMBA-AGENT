@@ -8,7 +8,16 @@ import App from "./App";
 import { startLogin } from "./const";
 import "./index.css";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Disable automatic retries globally; individual queries can override this.
+      // This prevents stale conversation-ID history fetches from retrying 3 times
+      // before the client can detect and recover from the invalid-ID state.
+      retry: false,
+    },
+  },
+});
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
