@@ -1,0 +1,24 @@
+Screenshot verification notes:
+
+Landing Page (/):
+- Hero section with "Find Your Perfect Rental Home in Kenya" headline - looks great
+- "Start Searching" CTA button visible
+- "Chat with AI" secondary button visible
+- Stats: 4 Cities, 24+ Listings, 6 Property Types
+- "How It Works" section with 3 steps
+- Featured Listings section with property images - images are loading correctly
+- "Available Cities" section showing Nairobi, Mombasa, Kisumu, Nakuru
+- Footer with "Ready to Find Your Home?" CTA
+- Property cards show images, heart/favorite icons on cards
+
+Chat Page (/chat):
+- Quick filters visible: Nairobi, Mombasa, Kisumu, Nakuru, price ranges, bedrooms, property types
+- Empty state with "How can I help you find a home?" message
+- 4 suggested prompts showing
+- Text input at bottom
+- Header with PataNyumba branding
+
+Issues to note:
+- Property images are loading on the landing page - good!
+- Chat page looks clean and functional
+- Everything appears to be working correctly

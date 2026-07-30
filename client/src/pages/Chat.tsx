@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,6 +8,9 @@ import { PropertyCard, type PropertyData } from "@/components/PropertyCard";
 import { Home, Send, Sparkles, Loader2, ArrowLeft, MessageSquare } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { Link } from "wouter";
+
+const CHAT_STORAGE_KEY = "patanyumba_chat_state";
+const CONVERSATION_ID_STORAGE_KEY = "patanyumba_conversation_id";
 
 interface ChatMessage {
   id: number;
@@ -41,12 +44,80 @@ const CITIES = ["Nairobi", "Mombasa", "Kisumu", "Nakuru"];
 const BEDROOMS = [0, 1, 2, 3];
 const PROPERTY_TYPES = ["bedsitter", "1BR", "2BR", "3BR", "apartment", "maisonette"];
 
+// localStorage helpers
+function loadChatState(): { messages: ChatMessage[]; conversationId: number | null } | null {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Convert date strings back to Date objects
+    const messages: ChatMessage[] = (parsed.messages || []).map((m: ChatMessage) => ({
+      ...m,
+      messageProperties: (m.messageProperties || []).map((p: any) => ({
+        ...p,
+        createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
+        updatedAt: p.updatedAt ? new Date(p.updatedAt) : new Date(),
+      })),
+    }));
+    return {
+      messages,
+      conversationId: parsed.conversationId || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveChatState(conversationId: number | null, messages: ChatMessage[]) {
+  try {
+    const state = { conversationId, messages };
+    // Only store the last 50 messages to keep localStorage manageable
+    const trimmedMessages = messages.slice(-50);
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage full — silently fail
+  }
+}
+
+function loadConversationId(): number | null {
+  try {
+    const raw = localStorage.getItem(CONVERSATION_ID_STORAGE_KEY);
+    return raw ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveConversationId(id: number | null) {
+  try {
+    if (id !== null) {
+      localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, String(id));
+    } else {
+      localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
+    }
+  } catch {
+    // silently fail
+  }
+}
+
 export default function Chat() {
-  const [conversationId, setConversationId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Initialize from localStorage on mount
+  const [conversationId, setConversationId] = useState<number | null>(() => {
+    const saved = loadConversationId();
+    if (saved) return saved;
+    const chatState = loadChatState();
+    return chatState?.conversationId || null;
+  });
+
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const chatState = loadChatState();
+    return chatState?.messages || [];
+  });
+
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Filters
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
@@ -60,9 +131,9 @@ export default function Chat() {
     { enabled: !!conversationId }
   );
 
-  // Load history when conversationId changes
+  // Load history from server when conversationId changes (only if we have no local messages)
   useEffect(() => {
-    if (getHistory.data) {
+    if (getHistory.data && messages.length === 0) {
       const enriched: ChatMessage[] = getHistory.data.messages.map(m => ({
         id: m.id,
         role: m.role as "user" | "assistant",
@@ -71,8 +142,26 @@ export default function Chat() {
         messageProperties: (m.messageProperties ?? []).filter((p): p is PropertyData => p != null) as PropertyData[],
       }));
       setMessages(enriched);
+      saveChatState(conversationId, enriched);
     }
   }, [getHistory.data]);
+
+  // Persist conversation ID whenever it changes
+  useEffect(() => {
+    saveConversationId(conversationId);
+  }, [conversationId]);
+
+  // Persist messages whenever they change
+  useEffect(() => {
+    saveChatState(conversationId, messages);
+  }, [conversationId, messages]);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isLoading]);
 
   const handleSendMessage = useCallback(
     async (content: string) => {
@@ -147,6 +236,9 @@ export default function Chat() {
     setSelectedPriceRange(null);
     setSelectedBedrooms(null);
     setSelectedType(null);
+    // Clear localStorage
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
   };
 
   const activeFilterCount = [selectedCity, selectedPriceRange, selectedBedrooms, selectedType].filter(Boolean).length;
@@ -300,7 +392,7 @@ export default function Chat() {
         )}
 
         {/* Messages */}
-        <ScrollArea className="flex-1 px-4">
+        <ScrollArea className="flex-1 px-4" ref={scrollRef}>
           <div className="space-y-6 py-4">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16">

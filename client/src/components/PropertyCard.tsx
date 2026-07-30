@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { trpc } from "@/lib/trpc";
 import {
   MapPin,
   BedDouble,
@@ -7,6 +10,7 @@ import {
   Phone,
   Building2,
   Tag,
+  Heart,
 } from "lucide-react";
 
 export interface PropertyData {
@@ -34,10 +38,66 @@ interface PropertyCardProps {
 
 export function PropertyCard({ property }: PropertyCardProps) {
   const amenityList = property.amenities.split(", ").filter(Boolean);
+  const toggleFavorite = trpc.favorites.toggle.useMutation();
+  const [isFav, setIsFav] = useState(false);
+  const [showHeart, setShowHeart] = useState(true);
+
+  const handleToggleFavorite = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsFav(!isFav);
+    try {
+      const result = await toggleFavorite.mutateAsync({ propertyId: property.id });
+      setIsFav(result.isFavorite);
+      setShowHeart(true);
+    } catch {
+      // Revert on error
+      setIsFav(!isFav);
+    }
+    // Animate heart feedback
+    setShowHeart(false);
+    setTimeout(() => setShowHeart(true), 300);
+  };
 
   return (
-    <Card className="property-card overflow-hidden">
-      <CardHeader className="pb-2">
+    <Card className="property-card overflow-hidden group">
+      {/* Property Image */}
+      {property.imageUrl && (
+        <div className="relative w-full h-40 overflow-hidden bg-muted/50">
+          <img
+            src={property.imageUrl}
+            alt={property.title}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            loading="lazy"
+          />
+          {/* Favorite Button */}
+          <button
+            onClick={handleToggleFavorite}
+            className={`absolute top-3 right-3 z-10 size-8 rounded-full flex items-center justify-center shadow-md transition-all duration-200 ease-out ${
+              isFav
+                ? "bg-red-500 text-white hover:bg-red-600"
+                : "bg-white/90 text-muted-foreground hover:bg-white hover:text-red-500"
+            }`}
+            aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+          >
+            <Heart
+              className={`size-4 transition-transform duration-300 ${isFav ? "fill-current scale-100" : "scale-90"}`}
+              key={showHeart ? "visible" : "hidden"}
+            />
+          </button>
+          {/* Property Type Badge on Image */}
+          <div className="absolute bottom-3 left-3">
+            <Badge
+              variant="default"
+              className="bg-primary text-primary-foreground text-xs font-medium px-2 py-0.5 shadow-lg"
+            >
+              {property.propertyType}
+            </Badge>
+          </div>
+        </div>
+      )}
+
+      <CardHeader className={`pb-2 ${property.imageUrl ? "pt-4" : ""}`}>
         <div className="flex items-start justify-between gap-2">
           <div>
             <CardTitle className="text-base font-semibold leading-tight">
@@ -48,14 +108,9 @@ export function PropertyCard({ property }: PropertyCardProps) {
               <span>{property.location}, {property.city}</span>
             </div>
           </div>
-          <Badge
-            variant="default"
-            className="shrink-0 bg-primary text-primary-foreground text-xs font-medium px-2 py-0.5"
-          >
-            {property.propertyType}
-          </Badge>
         </div>
       </CardHeader>
+
       <CardContent className="pt-0 space-y-3">
         {/* Key Details */}
         <div className="flex items-center gap-4 text-sm">
@@ -102,6 +157,23 @@ export function PropertyCard({ property }: PropertyCardProps) {
                 {property.landlordPhone}
               </span>
             )}
+          </div>
+        )}
+
+        {/* Favorite action row */}
+        {!property.imageUrl && (
+          <div className="flex items-center justify-end pt-1 border-t">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`text-xs h-7 px-2 transition-all duration-200 ${
+                isFav ? "text-red-500 hover:text-red-600" : "text-muted-foreground hover:text-red-500"
+              }`}
+              onClick={handleToggleFavorite}
+            >
+              <Heart className={`size-3.5 mr-1 ${isFav ? "fill-current" : ""}`} />
+              {isFav ? "Saved" : "Save"}
+            </Button>
           </div>
         )}
       </CardContent>

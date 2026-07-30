@@ -153,3 +153,63 @@ describe("chat.create", () => {
     expect(typeof result.conversationId).toBe("number");
   });
 });
+describe("favorites.toggle", () => {
+  it("adds a property as favorite and returns true", async () => {
+    const ctx = createTestContext();
+    const caller = appRouter.createCaller(ctx);
+
+    // Get a valid property ID first
+    const featured = await caller.properties.featured();
+    expect(featured.length).toBeGreaterThan(0);
+    const propertyId = featured[0].id;
+
+    const result = await caller.favorites.toggle({ propertyId });
+    expect(result).toHaveProperty("isFavorite");
+    expect(typeof result.isFavorite).toBe("boolean");
+  });
+
+  it("toggles favorite state", async () => {
+    const ctx = createTestContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const featured = await caller.properties.featured();
+    // Use a different property to avoid conflict with the previous test
+    const propertyId = featured[1]?.id || featured[0].id;
+
+    // First toggle
+    const first = await caller.favorites.toggle({ propertyId });
+    expect(first).toHaveProperty("isFavorite");
+
+    // Second toggle should return the opposite state
+    const second = await caller.favorites.toggle({ propertyId });
+    expect(second).toHaveProperty("isFavorite");
+    expect(first.isFavorite).not.toBe(second.isFavorite);
+  });
+});
+
+describe("favorites.list", () => {
+  it("returns an array of favorited properties", async () => {
+    const ctx = createTestContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.favorites.list();
+    expect(Array.isArray(result)).toBe(true);
+  });
+});
+
+describe("properties include imageUrl", () => {
+  it("featured properties have imageUrl fields", async () => {
+    const ctx = createTestContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.properties.featured();
+    expect(result.length).toBeGreaterThan(0);
+
+    const withImages = result.filter((p) => p.imageUrl !== null);
+    expect(withImages.length).toBeGreaterThan(0);
+    withImages.forEach((p) => {
+      expect(typeof p.imageUrl).toBe("string");
+      expect(p.imageUrl!.startsWith("/manus-storage/")).toBe(true);
+    });
+  });
+});

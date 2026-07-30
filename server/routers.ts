@@ -15,6 +15,9 @@ import {
   addMessage,
   getConversation,
   PropertyFilters,
+  addFavorite,
+  removeFavorite,
+  getFavorites,
 } from "./db";
 
 export const appRouter = router({
@@ -297,6 +300,55 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
       const id = await createConversation(ctx.user?.id, "New Chat");
       return { conversationId: id };
     }),
+  }),
+
+  // ─── Favorites Endpoints ──────────────────────────────────────────
+
+  favorites: router({
+    /**
+     * Toggle a property favorite. Returns the new state.
+     */
+    toggle: publicProcedure
+      .input(z.object({ propertyId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        try {
+          // Check if already favorited
+          const existing = await getFavorites(ctx.user?.id);
+          const isFav = existing.some((f) => f.propertyId === input.propertyId);
+
+          if (isFav) {
+            await removeFavorite(input.propertyId);
+            return { isFavorite: false };
+          } else {
+            await addFavorite(input.propertyId, ctx.user?.id);
+            return { isFavorite: true };
+          }
+        } catch {
+          return { isFavorite: false };
+        }
+      }),
+
+    /**
+     * Get all favorited properties.
+     */
+    list: publicProcedure.query(async ({ ctx }) => {
+      const favs = await getFavorites(ctx.user?.id);
+      const propertyIds = favs.map((f) => f.propertyId);
+      if (propertyIds.length === 0) return [];
+      const props = await getPropertiesByIds(propertyIds);
+      return props;
+    }),
+
+    /**
+     * Check if a specific property is favorited.
+     */
+    check: publicProcedure
+      .input(z.object({ propertyId: z.number() }))
+      .query(async ({ input }) => {
+        const favs = await getFavorites();
+        const isFav = favs.some((f) => f.propertyId === input.propertyId);
+        return { isFavorite: isFav };
+      }),
   }),
 });
 

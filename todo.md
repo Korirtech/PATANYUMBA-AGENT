@@ -19,3 +19,6 @@
 - [x] Platform covers four cities: Nairobi, Mombasa, Kisumu, Nakuru
 - [x] Vitest tests for backend procedures
 - [x] Final verification and delivery
+- [x] Placeholder property images on listings
+- [x] localStorage chat history persistence across page reloads
+- [x] Favorite button on property cards with favorites database table

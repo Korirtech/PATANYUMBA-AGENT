@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, lte, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, properties, conversations, messages } from "../drizzle/schema";
+import { InsertUser, users, properties, conversations, messages, favorites } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -268,5 +268,67 @@ export async function getConversation(conversationId: number) {
   } catch (error) {
     console.error("[Database] Failed to get conversation:", error);
     return null;
+  }
+}
+
+// ─── Favorites Queries ─────────────────────────────────────────────
+
+export async function addFavorite(propertyId: number, userId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  try {
+    const [result] = await db.insert(favorites).values({
+      propertyId,
+      userId: userId ?? null,
+    });
+    return { id: result.insertId };
+  } catch (error) {
+    console.error("[Database] Failed to add favorite:", error);
+    throw error;
+  }
+}
+
+export async function removeFavorite(propertyId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  try {
+    await db.delete(favorites).where(eq(favorites.propertyId, propertyId));
+    return true;
+  } catch (error) {
+    console.error("[Database] Failed to remove favorite:", error);
+    throw error;
+  }
+}
+
+export async function getFavorites(userId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  try {
+    const query = db.select().from(favorites);
+    if (userId) {
+      const result = await query.where(eq(favorites.userId, userId));
+      return result;
+    }
+    return await query;
+  } catch (error) {
+    console.error("[Database] Failed to get favorites:", error);
+    return [];
+  }
+}
+
+export async function isFavorite(propertyId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  try {
+    const result = await db.select().from(favorites)
+      .where(eq(favorites.propertyId, propertyId))
+      .limit(1);
+    return result.length > 0;
+  } catch {
+    return false;
   }
 }

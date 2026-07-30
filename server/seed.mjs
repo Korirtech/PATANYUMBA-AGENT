@@ -8,6 +8,16 @@ if (!process.env.DATABASE_URL) {
 
 const db = drizzle(process.env.DATABASE_URL);
 
+// Image mapping by property type
+const imageMap = {
+  bedsitter: "/manus-storage/property-bedsitter_2941f644.jpg",
+  "1BR": "/manus-storage/property-1br_9a64f78c.jpg",
+  "2BR": "/manus-storage/property-2br_e1e19af2.jpg",
+  "3BR": "/manus-storage/property-3br_4a511b0b.jpg",
+  apartment: "/manus-storage/property-apartment_6d386f64.jpg",
+  maisonette: "/manus-storage/property-maisonette_9f51fb15.jpg",
+};
+
 const sampleProperties = [
   // ─── NAIROBI ───────────────────────────────────────────────────
   {
@@ -22,6 +32,7 @@ const sampleProperties = [
     description: "A cozy bedsitter in the heart of Kilimani, close to shops and public transport.",
     landlordName: "James Mwangi",
     landlordPhone: "0712345678",
+    imageUrl: imageMap.bedsitter,
     isFeatured: 1,
   },
   {
@@ -36,6 +47,7 @@ const sampleProperties = [
     description: "Modern one-bedroom apartment with city views and premium amenities in Westlands.",
     landlordName: "Sarah Odhiambo",
     landlordPhone: "0723456789",
+    imageUrl: imageMap["1BR"],
     isFeatured: 1,
   },
   {
@@ -50,6 +62,7 @@ const sampleProperties = [
     description: "Beautiful two-bedroom apartment in a gated community with lush gardens.",
     landlordName: "Peter Kamau",
     landlordPhone: "0734567890",
+    imageUrl: imageMap["2BR"],
     isFeatured: 1,
   },
   {
@@ -64,6 +77,7 @@ const sampleProperties = [
     description: "Stunning three-bedroom apartment with modern finishes in a prime location.",
     landlordName: "Grace Njeri",
     landlordPhone: "0745678901",
+    imageUrl: imageMap["3BR"],
     isFeatured: 0,
   },
   {
@@ -92,6 +106,7 @@ const sampleProperties = [
     description: "Spacious maisonette with private compound and modern finishes.",
     landlordName: "Mary Wanjiku",
     landlordPhone: "0767890123",
+    imageUrl: imageMap.maisonette,
     isFeatured: 1,
   },
   {
@@ -358,9 +373,13 @@ try {
   await db.delete(properties).execute();
   console.log("Cleared existing properties");
 
-  // Insert all properties
+  // Insert all properties, filling in missing imageUrls
   for (const prop of sampleProperties) {
-    await db.insert(properties).values(prop);
+    const record = { ...prop };
+    if (!record.imageUrl && record.propertyType) {
+      record.imageUrl = imageMap[record.propertyType] || null;
+    }
+    await db.insert(properties).values(record);
   }
   console.log(`Successfully seeded ${sampleProperties.length} properties`);
 } catch (error) {

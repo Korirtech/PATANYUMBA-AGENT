@@ -15,6 +15,13 @@
       "when": 1785408177434,
       "tag": "0001_fluffy_talisman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1785409127214,
+      "tag": "0002_mushy_speedball",
+      "breakpoints": true
     }
   ]
 }
