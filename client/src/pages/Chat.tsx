@@ -266,7 +266,10 @@ export default function Chat() {
           message: content.trim() + filterContext,
         });
 
-        setConversationId(response.conversationId);
+        // If server returned 0 or null, it means DB is down but we got a response anyway
+        if (response.conversationId && response.conversationId > 0) {
+          setConversationId(response.conversationId);
+        }
 
         const assistantMsg: ChatMessage = {
           id: Date.now() + 1,
@@ -276,19 +279,17 @@ export default function Chat() {
           messageProperties: response.properties.filter((p): p is typeof response.properties[0] => !!p),
         };
         setMessages((prev) => [...prev, assistantMsg]);
-      } catch (error: unknown) {
+      } catch (error: any) {
         console.error("[Chat] Failed to send message:", error);
 
         // Determine whether the failure is likely caused by a stale conversation
         // ID (e.g. the server restarted and the conversation no longer exists).
-        // In that case, clear the stale ID and retry the message as a fresh
-        // conversation so the user gets a useful response instead of an error.
+        const errorMessage = error?.message || String(error);
         const isStaleConversationError =
           currentConversationId !== null &&
-          error instanceof Error &&
-          (error.message.toLowerCase().includes("conversation") ||
-            error.message.toLowerCase().includes("not found") ||
-            error.message.toLowerCase().includes("database"));
+          (errorMessage.toLowerCase().includes("conversation") ||
+            errorMessage.toLowerCase().includes("not found") ||
+            errorMessage.toLowerCase().includes("database"));
 
         if (isStaleConversationError) {
           console.warn("[Chat] Stale conversation ID detected — retrying as new conversation.");
@@ -301,7 +302,9 @@ export default function Chat() {
               message: content.trim() + filterContext,
             });
 
-            setConversationId(retryResponse.conversationId);
+            if (retryResponse.conversationId && retryResponse.conversationId > 0) {
+              setConversationId(retryResponse.conversationId);
+            }
 
             const assistantMsg: ChatMessage = {
               id: Date.now() + 1,
@@ -315,16 +318,21 @@ export default function Chat() {
             setMessages((prev) => [...prev, assistantMsg]);
             setIsLoading(false);
             return;
-          } catch (retryError) {
+          } catch (retryError: any) {
             console.error("[Chat] Retry after stale-ID reset also failed:", retryError);
           }
         }
 
         // Generic error — show a user-friendly message with a hint to try again.
+        // We include a bit more detail if available to help the user/developer.
+        const displayError = errorMessage.includes("Database") 
+          ? "I'm having trouble connecting to my database, but I can still chat. Please try again in a moment."
+          : "Sorry, something went wrong. Please try again.";
+
         const errorMsg: ChatMessage = {
           id: Date.now() + 1,
           role: "assistant",
-          content: "Sorry, something went wrong. Please try again.",
+          content: displayError,
           propertyIds: null,
           messageProperties: [],
         };

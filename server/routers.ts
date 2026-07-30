@@ -87,19 +87,32 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         let conversationId = input.conversationId;
 
-        // Create conversation if needed
-        if (!conversationId) {
-          conversationId = await createConversation(
-            ctx.user?.id,
-            input.message.slice(0, 50)
-          );
+        // Best-effort: Create conversation if needed
+        try {
+          if (!conversationId) {
+            conversationId = await createConversation(
+              ctx.user?.id,
+              input.message.slice(0, 50)
+            );
+          }
+        } catch (dbError) {
+          console.error("[Chat] Failed to create/get conversation in DB:", dbError);
+          // Fallback to a "stateless" conversation ID if DB is down
+          conversationId = conversationId ?? 0;
         }
 
-        // Save user message
-        await addMessage(conversationId!, "user", input.message);
+        // Best-effort: Save user message
+        try {
+          if (conversationId && conversationId > 0) {
+            await addMessage(conversationId, "user", input.message);
+          }
+        } catch (dbError) {
+          console.error("[Chat] Failed to save user message to DB:", dbError);
+        }
 
-        // Parse the user's message with LLM to extract search filters
-        const filterPrompt = `You are a property search assistant for a Kenyan rental platform. Extract search filters from the user's message and return them as JSON. If a filter is not mentioned, omit it.
+        try {
+          // Parse the user's message with LLM to extract search filters
+          const filterPrompt = `You are a property search assistant for a Kenyan rental platform. Extract search filters from the user's message and return them as JSON. If a filter is not mentioned, omit it.
 
 Available cities: Nairobi, Mombasa, Kisumu, Nakuru
 Available property types: bedsitter, 1BR, 2BR, 3BR, apartment, maisonette
@@ -115,7 +128,6 @@ Return ONLY a JSON object with these possible fields:
 
 Do NOT include any other fields.`;
 
-        try {
           const filterResponse = await invokeLLM({
             messages: [{ role: "user", content: filterPrompt }],
             response_format: {
@@ -204,34 +216,47 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
               ? responseContent
               : "I apologize, I couldn't process your request. Please try again.";
 
-          // Save assistant message with property IDs
-          await addMessage(
-            conversationId!,
-            "assistant",
-            assistantContent,
-            propertyIds.length > 0 ? JSON.stringify(propertyIds) : undefined
-          );
+          // Best-effort: Save assistant message with property IDs
+          try {
+            if (conversationId && conversationId > 0) {
+              await addMessage(
+                conversationId,
+                "assistant",
+                assistantContent,
+                propertyIds.length > 0 ? JSON.stringify(propertyIds) : undefined
+              );
+            }
+          } catch (dbError) {
+            console.error("[Chat] Failed to save assistant message to DB:", dbError);
+          }
 
           return {
-            conversationId: conversationId!,
+            conversationId: conversationId ?? 0,
             assistantMessage: assistantContent,
             properties: matchedProperties,
           };
         } catch (error) {
           console.error("[Chat] AI processing error:", error);
 
-          // Fallback: save error message and return basic search
+          // Fallback: return basic search
           const fallbackProperties = await searchProperties({});
           const fallbackMessage = "I'm having trouble processing your request right now. Please try again, or browse our featured listings below.";
 
-          await addMessage(
-            conversationId!,
-            "assistant",
-            fallbackMessage
-          );
+          // Best-effort: save error message
+          try {
+            if (conversationId && conversationId > 0) {
+              await addMessage(
+                conversationId,
+                "assistant",
+                fallbackMessage
+              );
+            }
+          } catch (dbError) {
+            console.error("[Chat] Failed to save fallback message to DB:", dbError);
+          }
 
           return {
-            conversationId: conversationId!,
+            conversationId: conversationId ?? 0,
             assistantMessage: fallbackMessage,
             properties: fallbackProperties,
           };
