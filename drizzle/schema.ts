@@ -72,7 +72,7 @@ export const messages = mysqlTable("messages", {
   conversationId: int("conversationId").notNull(),
   role: mysqlEnum("role", ["user", "assistant"]).notNull(),
   content: text("content").notNull(),
-  propertyIds: text("propertyIds"),
+  propertyIds: text("propertyIds"), // Stores comma-separated UUIDs or IDs
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -85,7 +85,7 @@ export type InsertMessage = typeof messages.$inferInsert;
 export const favorites = mysqlTable("favorites", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId"),
-  propertyId: int("propertyId").notNull(),
+  propertyId: varchar("propertyId", { length: 255 }).notNull(), // Changed to varchar to support UUIDs from Patanyumba-App
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

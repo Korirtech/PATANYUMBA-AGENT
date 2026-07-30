@@ -292,12 +292,12 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
         const messages = await getConversationMessages(input.conversationId);
 
         // Collect all property IDs from assistant messages
-        const allPropertyIds = new Set<number>();
+        const allPropertyIds = new Set<string | number>();
         for (const msg of messages) {
           if (msg.propertyIds) {
             try {
               const ids = JSON.parse(msg.propertyIds);
-              ids.forEach((id: number) => allPropertyIds.add(id));
+              ids.forEach((id: string | number) => allPropertyIds.add(id));
             } catch {
               // ignore parse errors
             }
@@ -309,7 +309,7 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
             ? await getPropertiesByIds(Array.from(allPropertyIds))
             : [];
 
-        const propertyMap = new Map<number, typeof allProperties[0]>();
+        const propertyMap = new Map<string | number, typeof allProperties[0]>();
         allProperties.forEach((p) => propertyMap.set(p.id, p));
 
         // Build enriched messages
@@ -318,7 +318,7 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
           messageProperties: msg.propertyIds
             ? (() => {
                 try {
-                  const ids: number[] = JSON.parse(msg.propertyIds);
+                  const ids: (string | number)[] = JSON.parse(msg.propertyIds);
                   return ids
                     .map((id) => propertyMap.get(id))
                     .filter(Boolean);
@@ -351,12 +351,12 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
      * Toggle a property favorite. Returns the new state.
      */
     toggle: publicProcedure
-      .input(z.object({ propertyId: z.number() }))
+      .input(z.object({ propertyId: z.union([z.string(), z.number()]) }))
       .mutation(async ({ input, ctx }) => {
         try {
           // Check if already favorited
           const existing = await getFavorites(ctx.user?.id);
-          const isFav = existing.some((f) => f.propertyId === input.propertyId);
+          const isFav = existing.some((f) => f.propertyId === String(input.propertyId));
 
           if (isFav) {
             await removeFavorite(input.propertyId);
@@ -385,10 +385,10 @@ Provide a natural, helpful response in 2-4 sentences. Be conversational and frie
      * Check if a specific property is favorited.
      */
     check: publicProcedure
-      .input(z.object({ propertyId: z.number() }))
+      .input(z.object({ propertyId: z.union([z.string(), z.number()]) }))
       .query(async ({ input }) => {
         const favs = await getFavorites();
-        const isFav = favs.some((f) => f.propertyId === input.propertyId);
+        const isFav = favs.some((f) => f.propertyId === String(input.propertyId));
         return { isFavorite: isFav };
       }),
   }),
