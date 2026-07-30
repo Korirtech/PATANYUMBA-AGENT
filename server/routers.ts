@@ -188,7 +188,12 @@ Do NOT include any other fields.`;
             }
           } catch (filterErr) {
             console.error("[Chat] Filter extraction failed:", filterErr);
-            // Continue with empty filters rather than failing the whole request
+            // Fallback: try to extract city name via simple regex if LLM fails
+            const cityMatch = input.message.match(/(Nairobi|Mombasa|Kisumu|Nakuru)/i);
+            if (cityMatch) {
+              filters.city = cityMatch[0].charAt(0).toUpperCase() + cityMatch[0].slice(1).toLowerCase();
+              console.log("[Chat] Regex fallback extracted city:", filters.city);
+            }
           }
 
           // 2. Search properties

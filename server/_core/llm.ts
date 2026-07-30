@@ -219,7 +219,8 @@ const resolveApiUrl = () =>
 
 const assertApiKey = () => {
   if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+    console.error("[LLM] ERROR: AI API Key is not configured. Please set BUILT_IN_FORGE_API_KEY or OPENAI_API_KEY.");
+    throw new Error("AI API Key is not configured. Please check your environment variables.");
   }
 };
 
